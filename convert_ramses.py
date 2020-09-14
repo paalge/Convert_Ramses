@@ -18,11 +18,12 @@ import uuid
 import datetime as dt
 import yaml
 import warnings
+from argparse import ArgumentParser, RawDescriptionHelpFormatter
 
 __all__ = []
 __version__ = 0.1
 __date__ = '2020-09-10'
-__updated__ = '2020-09-11'
+__updated__ = '2020-09-14'
 
 
 class Ramses():
@@ -349,14 +350,63 @@ def dsets_to_xarray(dsets, folder, config):
         ramses[r].write_netcdf()
 
 
-def main():
-    f = "../Export of Tribox_9854 on 2020-09-04 10-00-02/Tribox_9854_Spectra_2020-08-30_22-09-10_to_2020-09-04_10-08-00.dat"
-    dsets = __read_dsets_in_file(f)
+def parse_options():
+    """
+    Parse the command line options and return these. Also performs some basic
+    sanity checks, like checking number of arguments.
+    """
+    program_version = "v%s" % __version__
+    program_build_date = str(__updated__)
+    program_version_message = '%%(prog)s %s (%s)' % (
+        program_version, program_build_date)
+    program_shortdesc = '''
+    This program reads in a *.dat* file produced by radiometric Ramses sensors 
+    connected to a Tribox computer and converts it to three CF and ACDD compliant
+    netCDF4 files. 
+    '''
+    program_license = '''%s
+    Created by Pål Ellingsen on %s.
+    Distributed on an "AS IS" basis without warranties,
+    either expressed or implied.
+    The only condition of use is that no one at TriOS or with association to 
+    TriOS is allowed to use this without written permission from the author.
+    USAGE
+''' % (program_shortdesc, str(__date__))
 
-    with open('config.yaml', 'r') as y:
+    # Setup argument parser
+    parser = ArgumentParser(description=program_license,
+                            formatter_class=RawDescriptionHelpFormatter)
+
+    parser.add_argument('input', type=str, help='''The input file dat file ''')
+    parser.add_argument(
+        'output', type=str, help='''The output folder for storing the netcdf4 files. Any existing files will be appended to. ''')
+    parser.add_argument('-V', '--version', action='version',
+                        version=program_version_message)
+    parser.add_argument('-c', dest='config', type=str, default='config.yaml',
+                        help="The yaml config file. Se the default file for what needs to be in it [default: %(default)s]")
+
+    # Process arguments
+    args = parser.parse_args()
+
+    # if args.verbose > 0:
+    #     print("Verbose mode on")
+
+    return args
+
+
+def main(argv=None):
+    '''
+    This program reads in a *.dat* file produced by radiometric Ramses sensors 
+    connected to a Tribox computer and converts it to three CF and ACDD compliant
+    netCDF4 files. 
+    '''
+    args = parse_options()
+    dsets = __read_dsets_in_file(args.input)
+
+    with open(args.config, 'r') as y:
         config = yaml.load(y, Loader=yaml.FullLoader)
 
-    dsets_to_xarray(dsets, '../netcdf/', config=config)
+    dsets_to_xarray(dsets, args.output, config=config)
 
 
 if __name__ == "__main__":
