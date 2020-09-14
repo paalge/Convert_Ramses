@@ -1,17 +1,33 @@
 #!/usr/bin/env python3
+# encoding: utf-8
+'''
+ -- This program reads in TriOS Ramses data
+ an entry
+@author:     Pål Ellingsen
+@contact:    pal.g.ellingsen@uit.no
+@deffield    updated: Updated
+'''
 
 import numpy as np
 import pandas as pd
 import xarray as xa
 import itertools
 import io
+import os
 import uuid
 import datetime as dt
+import yaml
+import warnings
+
+__all__ = []
+__version__ = 0.1
+__date__ = '2020-09-10'
+__updated__ = '2020-09-11'
 
 
 class Ramses():
 
-    def __init__(self, attrs, ship, azimuth, zenith):
+    def __init__(self, attrs, config, filename,  append_to=False):
         '''
         Class for holding building an Ramses dataset and writing it as a netCDF
         file
@@ -22,39 +38,19 @@ class Ramses():
             A dictionary with the dataset attributes (use __read_dsets_in_file)
             to make it
 
-        ship: str
-            The ship used
 
-        azimuth: float
-            The orientation of the sensor relative to the ship bow in degrees
-            270 is port, 90 is starboard,
-            None for vertical sensor
+        config: dict
+            A dictionary with the config for the file, if appending these values will be taken from the previous file. See file that is together with this for example of what should be there
 
-        zenith: float
-            The zenith angle of the sensor
-            0 is zenith, 180 is down
+        filename: str
+            Where to store the file
+
+        append_to: bool
+            True to append to file
+            Default: False
         '''
+
         self.ds = xa.Dataset()
-        self.ds.attrs['platformname'] = ship
-        self.ds.attrs['platform'] = 'ship'
-        self.ds.attrs['instrument'] = attrs['IDDevice'].strip()
-        self.ds.attrs['Make'] = 'TriOS Ramses'
-        self.ds.attrs['Calibration'] = attrs['IDDataCal'].strip()
-        self.ds.attrs['Conventions'] = 'CF-1.8, ACDD-1.3'
-        self.ds.attrs['title'] = 'Irradiance and radiance measurements around Tromsø'
-        self.ds.attrs['summary'] = 'This is a set of three files containing radiance and irradiance measurements from the fjords around Tromsø, intended to be used for satellite calibration.'
-
-        self.ds.attrs['id'] = str(uuid.uuid4())  # Set as random for now
-        self.ds.attrs['naming_authority'] = 'UiT The Arctic University of Norway'
-        self.ds.attrs['source'] = 'TriOS Ramses radiometer'
-        self.ds.attrs['processing_level'] = 'Radiometrically calibrated'
-        self.ds.attrs['standard_name_vocabulary'] = 'CF Standard Name Table v73'
-        self.ds.attrs['date_created'] = dt.datetime.utcnow().isoformat()
-        self.ds.attrs['creator_name'] = 'Pål Gunnar Ellingsen'
-        self.ds.attrs['creator_email'] = 'pal.g.ellingsen@uit.no'
-        self.ds.attrs['institution'] = 'UiT The Arctic University of Norway'
-        self.ds.attrs['project'] = 'The Nansen Legacy, CIRFA'
-
         self.time = []
         self.lats = []
         self.lons = []
@@ -64,13 +60,8 @@ class Ramses():
 
         # This is True for the irradiance sensor
         self.vert = 'SAMIP' in attrs['MethodName']
-
-        self.is_up_rad = zenith < 90
-        self.ds.coords['sensor_zenith_angle'] = float(zenith)
-        self.ds.coords['sensor_zenith_angle'].attrs['units'] = 'degree'
-        self.ds.coords['sensor_zenith_angle'].attrs['standard_name'] = 'sensor_zenith_angle'
-        self.ds.coords['sensor_zenith_angle'].attrs['comment'] = 'This is the mounted angle and does not take into account the ship movements'
-
+        # This is True for the radiance sensor pointing up
+        self.is_up_rad = config['up_rad'] in attrs['IDDevice']
         if self.vert:
             # self.pres = []
             # self.presvalid = []
@@ -78,11 +69,57 @@ class Ramses():
             self.inclvalid = []
             self.inclx = []
             self.incly = []
-        else:
-            self.ds.coords['relative_sensor_azimuth_angle'] = float(azimuth)
-            self.ds.coords['relative_sensor_azimuth_angle'].attrs['units'] = 'degree'
-            self.ds.coords['relative_sensor_azimuth_angle'].attrs['standard_name'] = 'relative_sensor_azimuth_angle'
-            self.ds.coords['relative_sensor_azimuth_angle'].attrs['comment'] = 'With respect to the bow, starboard is 90 degrees. This is the mounted angle and does not take into account the ship movements'
+
+        self.new = not(append_to)  # Check if we are making a new file
+        self.filename = filename
+        self.config = config
+
+        if self.new:  # We are making a new file
+            self.ds.attrs['platformname'] = config['platformname']
+            self.ds.attrs['platform'] = config['platform']
+            self.ds.attrs['instrument'] = attrs['IDDevice'].strip()
+            self.ds.attrs['Make'] = 'TriOS Ramses'
+            self.ds.attrs['Calibration'] = attrs['IDDataCal'].strip()
+            self.ds.attrs['Conventions'] = 'CF-1.8, ACDD-1.3'
+            self.ds.attrs['title'] = config['title']
+            self.ds.attrs['summary'] = config['summary']
+
+            self.ds.attrs['id'] = str(uuid.uuid4())  # Set as random for now
+            self.ds.attrs['naming_authority'] = config['naming_authority']
+            self.ds.attrs['source'] = 'TriOS Ramses radiometer'
+            self.ds.attrs['processing_level'] = 'Radiometrically calibrated'
+            self.ds.attrs['standard_name_vocabulary'] = 'CF Standard Name Table v73'
+            self.ds.attrs['date_created'] = dt.datetime.utcnow().isoformat()
+            self.ds.attrs['creator_name'] = config['creator_name']
+            self.ds.attrs['creator_email'] = config['creator_email']
+            self.ds.attrs['institution'] = config['institution']
+            self.ds.attrs['project'] = config['project']
+
+            if self.vert:  # Irradiance instrument
+                zenith = 0.0
+            elif self.is_up_rad:  # Upwelling Radiance instrument
+                zenith = 180 - float(config['zenith_angle'])
+            else:  # Downwelling Radiance instrument
+                zenith = float(config['zenith_angle'])
+
+            self.ds.coords['sensor_zenith_angle'] = [zenith]
+            self.ds.coords['sensor_zenith_angle'].attrs['units'] = 'degree'
+            self.ds.coords['sensor_zenith_angle'].attrs['standard_name'] = 'sensor_zenith_angle'
+            self.ds.coords['sensor_zenith_angle'].attrs['comment'] = 'This is the mounted angle and does not take into account the ship movements'
+
+            if not(self.vert):
+                self.ds.coords['relative_sensor_azimuth_angle'] = [float(
+                    config['rel_az'])]
+                self.ds.coords['relative_sensor_azimuth_angle'].attrs['units'] = 'degree'
+                self.ds.coords['relative_sensor_azimuth_angle'].attrs['standard_name'] = 'relative_sensor_azimuth_angle'
+                self.ds.coords['relative_sensor_azimuth_angle'].attrs['comment'] = 'With respect to the bow, starboard is 90 degrees.'
+
+        else:  # This is for appending to a file
+            self.append = xa.open_dataset(filename)
+            # Check that it is the same instrument:
+            if self.append.attrs['instrument'] != attrs['IDDevice']:
+                raise(
+                    'Trying to append to a file that has data from a different instrument')
 
     def add_dataset(self, attrs, data):
         '''
@@ -98,13 +135,24 @@ class Ramses():
 
         '''
         inst = attrs['IDDevice'].strip()
-        if self.ds.attrs['instrument'] != inst:
-            raise ValueError('Trying to write data for ' + inst +
-                             ' into a file for instrument ' + self.ds.attrs['instrument'])
+        if self.new:
+            if self.ds.attrs['instrument'] != inst:
+                raise ValueError('Trying to write data for ' + inst +
+                                 ' into a file for instrument ' + self.ds.attrs['instrument'])
+        else:
+            if self.append.attrs['instrument'] != inst:
+                raise ValueError('Trying to write data for ' + inst +
+                                 ' into a file for instrument ' + self.append.attrs['instrument'])
+
         time = pd.Timestamp(attrs['DateTime'],
                             tz='Europe/Oslo').tz_convert('UTC')
         # Need to remove timezone after converting to UTC
         time = time.tz_localize(None)
+
+        if not(self.new):
+            if time in self.append.time:  # Data already there
+                return
+
         self.time.append(time)
         self.lats.append(float(attrs['PositionLatitude']))
         self.lons.append(float(attrs['PositionLongitude']))
@@ -128,9 +176,9 @@ class Ramses():
             self.inclvalid.append(bool(attrs['InclValid']))
             # self.presvalid.append(bool(attrs['PressValid'])
 
-    def write_netcdf(self, filename):
+    def write_netcdf(self):
         '''
-        Write the datasets in the class to a netcdf file
+        Writes or appends the datasets in the class to a netcdf file
 
         Parameters
         ----------
@@ -138,14 +186,16 @@ class Ramses():
             The filename for the instrument
         '''
         # Make the coordinates
-        lats = np.asarray(self.lats)
+
+        if len(self.time) == 0:
+            warnings.warn('No new data to append, not doing anything')
+            return
+
+        lats = np.asanyarray(self.lats)
         self.ds.coords['lat'] = (('time'), lats)
         self.ds.coords['lat'].attrs['standard_name'] = 'latitude'
         self.ds.coords['lat'].attrs['long_name'] = 'latitude'
         self.ds.coords['lat'].attrs['units'] = 'degrees_north'
-
-        self.ds.attrs['geospatial_lat_min'] = np.min(lats)
-        self.ds.attrs['geospatial_lat_max'] = np.max(lats)
 
         lons = np.asarray(self.lons)
         self.ds.coords['lon'] = (('time'), lons)
@@ -153,18 +203,11 @@ class Ramses():
         self.ds.coords['lon'].attrs['long_name'] = 'longitude'
         self.ds.coords['lon'].attrs['units'] = 'degrees_east'
 
-        self.ds.attrs['geospatial_lon_min'] = np.min(lons)
-        self.ds.attrs['geospatial_lon_max'] = np.max(lons)
-
         times = np.asarray(self.time)
-        print(times)
         self.ds.coords['time'] = times
         self.ds.coords['time'].attrs['standard_name'] = 'time'
         self.ds.coords['time'].attrs['long_name'] = 'UTC time'
         self.ds.coords['time'].attrs['tz'] = 'UTC'
-
-        self.ds.attrs['time_coverage_start'] = str(times[0].isoformat())
-        self.ds.attrs['time_coverage_end'] = str(times[-1].isoformat())
 
         self.ds.coords['wave'] = (('wave'), self.waves)
         self.ds.coords['wave'].attrs['standard_name'] = 'radiation_wavelength'
@@ -177,7 +220,6 @@ class Ramses():
 
         # Input the data
         if self.vert:
-            print('shape', np.asarray(self.ints).shape)
             self.ds['irr'] = (
                 ('time', 'wave'), np.asarray(self.ints))
             self.ds['irr'].attrs['units'] = 'mW m-2 nm-1'
@@ -215,8 +257,39 @@ class Ramses():
             self.ds['radu'].attrs['long_name'] = 'Upwelling radiance measured above the sea per nm'
             self.ds['radu'].attrs['comment'] = 'Measured Upwelling radiance per nm'
 
+        def write_ranges(dset):
+            dset.attrs['geospatial_lat_min'] = np.min(dset.lat[:].data)
+            dset.attrs['geospatial_lat_max'] = np.max(dset.lat[:].data)
+
+            dset.attrs['geospatial_lon_min'] = np.min(dset.lon[:].data)
+            dset.attrs['geospatial_lon_max'] = np.max(dset.lon[:].data)
+
+            dset.attrs['time_coverage_start'] = str(dset.time[0].data)
+            dset.attrs['time_coverage_end'] = str(dset.time[-1].data)
+
+            return dset
         # Write filename
-        self.ds.to_netcdf(filename+self.ds.attrs['instrument']+'.nc')
+
+        if self.new:
+            ds = write_ranges(self.ds)
+            # print(ds)
+            ds.to_netcdf(self.filename)
+        else:  # We are appending
+            #print('append', self.append)
+            #print('ds', self.ds)
+            appended = xa.concat([self.append, self.ds], dim='time')
+            appended = write_ranges(appended)
+            self.append.close()
+            if 'history' in appended.attrs:
+                appended.attrs['history'] = appended.attrs['history']+' \n'
+            else:
+                appended.attrs['history'] = ''
+
+            appended.attrs['history'] = appended.attrs['history'] +\
+                dt.datetime.utcnow().isoformat() + ', ' + \
+                self.config['creator_name'] + ', ' + \
+                __file__ + ', appending more data'
+            appended.to_netcdf(self.filename)
 
 
 def __read_dsets_in_file(f):
@@ -224,6 +297,7 @@ def __read_dsets_in_file(f):
     with open(f) as infile:
         n = 0
         while True:  # n < 20:
+            # while n < 140:
             it = itertools.dropwhile(
                 lambda line: line.strip() != '[Spectrum]', infile)
             if next(it, None) is None:
@@ -244,7 +318,7 @@ def splitt_dset(dset):
         elif line.strip() == '[Attributes]':
             continue
         elif line.strip() == '[END] of [Attributes]':
-            dstart = idx+2
+            dstart = idx+3  # To comment lines and the first line of data is bad
             break
         key, value = line.strip().split('=')
         attrs[key.strip()] = value.strip()
@@ -253,7 +327,7 @@ def splitt_dset(dset):
     return attrs, data
 
 
-def dsets_to_xarray(dsets, filename, ship='HYAS', up_rad='SAM_86A4', zenith=40, az=270):
+def dsets_to_xarray(dsets, folder, config):
     ramses = {}
     for dset in dsets:
         attrs, data = splitt_dset(dset)
@@ -261,24 +335,28 @@ def dsets_to_xarray(dsets, filename, ship='HYAS', up_rad='SAM_86A4', zenith=40, 
             continue
 
         dev = attrs['IDDevice']
+
         if dev in ramses.keys():
             ramses[dev].add_dataset(attrs, data)
         else:  # Not made yet
-            if 'SAMIP' in attrs['MethodName']:  # Irradiance
-                ramses[dev] = Ramses(attrs, ship, None, 0)
-            elif dev == up_rad:  # Upwelling rad
-                ramses[dev] = Ramses(attrs, ship, az, 180-zenith)
-            else:  # Downwelling rad
-                ramses[dev] = Ramses(attrs, ship, az, zenith)
+            filename = os.path.join(folder, dev+'.nc')
+            append_to = False
+            if os.path.isfile(filename):
+                append_to = True
+            ramses[dev] = Ramses(attrs, config, filename, append_to=append_to)
 
     for r in ramses:
-        ramses[r].write_netcdf(filename)
+        ramses[r].write_netcdf()
 
 
 def main():
-    f = "Tribox_9854_Spectra_2020-08-30_22-09-10_to_2020-09-04_10-08-00.dat"
+    f = "../Export of Tribox_9854 on 2020-09-04 10-00-02/Tribox_9854_Spectra_2020-08-30_22-09-10_to_2020-09-04_10-08-00.dat"
     dsets = __read_dsets_in_file(f)
-    dsets_to_xarray(dsets, '../2020-09-10_')
+
+    with open('config.yaml', 'r') as y:
+        config = yaml.load(y, Loader=yaml.FullLoader)
+
+    dsets_to_xarray(dsets, '../netcdf/', config=config)
 
 
 if __name__ == "__main__":

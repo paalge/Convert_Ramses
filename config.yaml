@@ -1,0 +1,19 @@
+## About the data
+
+up_rad: SAM_86A5 # The upwelling radiometer (the one pointing towards the surface)
+zenith_angle: 40 # The zenith angle in degrees of the downwelling radiometer (0 is up), the upwelling is taken as 180-zenith_angle 
+rel_az: 270 # The relative azimuth angle in degrees with respect to the bow of the ship of the radiometers.  
+# 270 is port, 90 is starboard
+
+## Attributes
+creator_name: Pål Gunnar Ellingsen
+creator_email: pal.g.ellingsen@uit.no
+institution: UiT The Arctic University of Norway
+project: The Nansen Legacy, CIRFA
+platformname: Hyas
+platform: ship
+title: Irradiance and radiance measurements around Tromsø
+summary: This is a set of three files containing radiance and irradiance measurements from the fjords around Tromsø, intended to be used for satellite calibration.
+naming_authority: UiT The Arctic University of Norway
+
+
