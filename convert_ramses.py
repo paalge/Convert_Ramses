@@ -286,10 +286,13 @@ class Ramses():
             else:
                 appended.attrs['history'] = ''
 
+            dt_now = dt.datetime.utcnow().isoformat()
             appended.attrs['history'] = appended.attrs['history'] +\
-                dt.datetime.utcnow().isoformat() + ', ' + \
+                dt_now + ', ' + \
                 self.config['creator_name'] + ', ' + \
                 __file__ + ', appending more data'
+
+            appended['date_modified'] = dt_now
             appended.to_netcdf(self.filename)
 
 
